@@ -1,72 +1,110 @@
+<!--
+  =============================================================================
+  WFM Billing Practice
+  Billing Calculation System — PPM (Price Per Man Power)
+
+  Author   : Alvian Ibnu Farhan · 2251171
+  Team     : CCS | MIS - OPG2 | Unit3
+  Project  : WFM Practice
+
+  Overview
+  --------
+  A single-file, client-only web app that simulates a two-layer manpower
+  billing workflow:
+    1. Billing Creator — sets contract parameters and per-employee active
+       days, then submits the calculated billing for approval.
+    2. Billing Approver — reviews the submitted (locked) snapshot and either
+       approves or rejects it, optionally with a note.
+
+  There is no backend: all state lives in memory (the `state` object) and is
+  rebuilt into the DOM on every change via the `render()` function
+  (a minimal virtual-DOM-free re-render pattern — the entire #app subtree is
+  replaced on each state change, and event listeners are re-attached after
+  every render call).
+
+  Dependencies (loaded via CDN, see <head>):
+    - Chart.js   : renders the Max Potential vs Actual bar chart
+    - Tailwind   : utility-first styling (config extended with brand colors)
+    - Google Fonts (Inter / IBM Plex Mono / Fraunces)
+  =============================================================================
+-->
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WFM Billing Practice</title>
+
+<!-- Chart.js: used by drawChart() to render the Max Potential vs Actual bar chart -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- Tailwind CDN build + custom theme tokens (brand palette, fonts) -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   if (typeof tailwind !== 'undefined') {
-  tailwind.config = {
-    theme: {
-      extend: {
-        fontFamily: {
-          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
-          sans: ['"Inter"', 'ui-sans-serif', 'sans-serif'],
-        },
-        colors: {
-          ink: '#0F1B14',
-          paper: '#F6F4EC',
-          ledger: '#EDE9DA',
-          moss: {
-            50: '#F2F5EC',
-            100: '#E1E9D3',
-            200: '#C3D3A6',
-            300: '#9FB878',
-            400: '#7D9C55',
-            500: '#5C7A3B',
-            600: '#46602E',
-            700: '#374B25',
-            800: '#2A391D',
-            900: '#1D2814',
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+            sans: ['"Inter"', 'ui-sans-serif', 'sans-serif'],
           },
-          rust: '#B5502F',
-          gold: '#C08A2E',
+          colors: {
+            ink: '#0F1B14',
+            paper: '#F6F4EC',
+            ledger: '#EDE9DA',
+            // "moss" is the primary brand green ramp (50 lightest – 900 darkest)
+            moss: {
+              50: '#F2F5EC',
+              100: '#E1E9D3',
+              200: '#C3D3A6',
+              300: '#9FB878',
+              400: '#7D9C55',
+              500: '#5C7A3B',
+              600: '#46602E',
+              700: '#374B25',
+              800: '#2A391D',
+              900: '#1D2814',
+            },
+            rust: '#B5502F',  // used for negative/actual/reject accents
+            gold: '#C08A2E',  // used for pending/warning accents
+          }
         }
       }
-    }
-  }
+    };
   }
 </script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+
 <style>
+  /* ---- Base typography ---- */
   body { font-family: 'Inter', sans-serif; background-color: #F6F4EC; }
   .font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
   .font-mono { font-family: 'IBM Plex Mono', monospace; }
 
-  .grain {
-    background-image: radial-gradient(circle at 1px 1px, rgba(15,27,20,0.06) 1px, transparent 0);
-    background-size: 14px 14px;
-  }
-
+  /* ---- Scrollbar styling (WebKit browsers) ---- */
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-track { background: #EDE9DA; }
   ::-webkit-scrollbar-thumb { background: #9FB878; border-radius: 4px; }
 
+  /* Show number input spin buttons at full opacity (WebKit hides them by default on hover-only) */
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button { opacity: 1; }
 
-  .stamp {
-    animation: stampIn 0.4s cubic-bezier(.2,1.4,.4,1) forwards;
-  }
+  /* ---- Animations ---- */
+
+  /* "stamp" — used on the APPROVED / REJECTED rubber-stamp badge in the Approver view */
+  .stamp { animation: stampIn 0.4s cubic-bezier(.2,1.4,.4,1) forwards; }
   @keyframes stampIn {
     0% { transform: scale(2.2) rotate(-14deg); opacity: 0; }
     60% { transform: scale(0.92) rotate(-8deg); opacity: 1; }
     100% { transform: scale(1) rotate(-8deg); opacity: 1; }
   }
 
+  /* toast notifications (see showToast()) */
   .toast-enter { animation: toastIn 0.35s ease-out forwards; }
   @keyframes toastIn {
     from { transform: translateY(16px) scale(0.95); opacity: 0; }
@@ -78,18 +116,21 @@
     to { transform: translateY(16px) scale(0.9); opacity: 0; }
   }
 
+  /* briefly highlights a table row after its "active days" value changes */
   .row-flash { animation: flash 0.6s ease-out; }
   @keyframes flash {
     0% { background-color: rgba(157,184,120,0.35); }
     100% { background-color: transparent; }
   }
 
+  /* add/edit employee modal entrance */
   .modal-enter { animation: modalIn 0.25s ease-out forwards; }
   @keyframes modalIn {
     from { transform: translateY(10px) scale(0.97); opacity: 0; }
     to { transform: translateY(0) scale(1); opacity: 1; }
   }
 
+  /* wrong-password feedback on the Approver login gate */
   .shake { animation: shake 0.4s ease; }
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
@@ -99,6 +140,7 @@
     80% { transform: translateX(6px); }
   }
 
+  /* ---- Custom range slider (used for per-employee "active days") ---- */
   input[type="range"] {
     -webkit-appearance: none;
     height: 4px;
@@ -118,15 +160,59 @@
 </head>
 <body class="text-ink min-h-screen">
 
+<!-- Entire application is rendered into this single mount point by render() -->
 <div id="app"></div>
 
 <script>
-/* ============ CONSTANTS ============ */
+/**
+ * =============================================================================
+ * WFM Billing Practice — application script
+ *
+ * Author  : Alvian Ibnu Farhan · 2251171
+ * Team    : CCS | MIS - OPG2 | Unit3
+ * Project : WFM Practice
+ * =============================================================================
+ *
+ * Architecture summary
+ * ---------------------
+ * - `state`            : single mutable object holding all app state.
+ * - `render()`          : rebuilds the entire #app innerHTML from `state`,
+ *                          then re-attaches all event listeners. Called after
+ *                          every state mutation (no diffing / virtual DOM).
+ * - `attach*Events()`    : query the freshly-rendered DOM for interactive
+ *                          elements and wire up their listeners.
+ * - `calc()`             : pure function — given employees + params, returns
+ *                          { maxPotential, actual, achievement, rows }.
+ *
+ * Data flow for a billing cycle
+ * ------------------------------
+ *   Creator edits params/employees (state.params / state.employees, "live")
+ *     -> Creator clicks "Submit Billing for Approval"
+ *     -> a deep-cloned snapshot is stored in state.submittedSnapshot
+ *     -> state.status becomes 'pending' (live data is now locked)
+ *     -> Approver reviews the snapshot and approves/rejects
+ *     -> state.status becomes 'approved' or 'rejected'
+ */
+
+/* ============================================================
+ * CONSTANTS
+ * ============================================================ */
+
+/** Password gating the Approver (Layer 2) view. Demo-only, not for production auth. */
 const APPROVER_PASSWORD = 'approve2026';
 
-/* ============ DATA ============ */
+/* ============================================================
+ * SEED DATA
+ * ============================================================ */
+
+/** Auto-increment counter for new employee NIPs added via the "Add Employee" modal. */
 let nextNip = 2271;
 
+/**
+ * Initial employee roster (PPM billing basis).
+ * `days` = number of active/working days out of the period's `fullDays`,
+ * used to prorate that employee's billing contribution.
+ */
 const initialEmployees = [
   { nip: 2261, name: 'Aurel',   note: 'Full month', days: 31 },
   { nip: 2262, name: 'Budi',    note: 'Full month', days: 31 },
@@ -140,41 +226,73 @@ const initialEmployees = [
   { nip: 2270, name: 'Lisa',    note: 'Resigned before month-end (25 May)', days: 24 },
 ];
 
+/**
+ * Default contract parameters for the PPM (Price Per Man Power) scheme.
+ * @property {number} fullDays   Number of days in the billing period (prorating base).
+ * @property {number} rateBase   Rate in Rupiah per man power for a full period.
+ * @property {number} standardMp Contracted/standard number of man power.
+ */
 const initialParams = {
   fullDays: 31,
   rateBase: 10000000,   // Rp / manpower / month (PPM)
   standardMp: 10,
 };
 
-/* ============ STATE ============ */
+/* ============================================================
+ * APPLICATION STATE
+ * ============================================================
+ * Single source of truth for the whole app. Mutated directly by event
+ * handlers, then `render()` is called to reflect the change in the DOM.
+ */
 let state = {
-  role: 'creator',           // 'creator' | 'approver'
+  role: 'creator',           // 'creator' | 'approver' — which layer/view is active
   status: 'draft',           // 'draft' | 'pending' | 'approved' | 'rejected'
-  employees: JSON.parse(JSON.stringify(initialEmployees)),
-  params: JSON.parse(JSON.stringify(initialParams)),
-  rejectNote: '',
-  submittedSnapshot: null,   // { employees, params } at time of submit
-  lastEditedNip: null,
+  employees: JSON.parse(JSON.stringify(initialEmployees)), // live/editable roster
+  params: JSON.parse(JSON.stringify(initialParams)),       // live/editable contract params
+  rejectNote: '',            // approver's note when rejecting a billing
+  submittedSnapshot: null,   // deep-cloned { employees, params } captured at submit time
+  lastEditedNip: null,       // NIP of the row to flash after a days-value change
 
-  // approver auth
+  // approver auth (simple client-side password gate; see APPROVER_PASSWORD)
   approverAuthed: false,
   authError: '',
 
-  // employee modal
+  // employee add/edit modal
   empModal: null,            // null | { mode: 'add'|'edit', nip, name, note, days }
-  empDeleteConfirm: null,    // nip pending delete confirmation
+  empDeleteConfirm: null,    // NIP currently showing an inline delete confirmation
 
-  // params editing
+  // contract parameters inline-edit mode
   editingParams: false,
-  paramsDraft: null,
+  paramsDraft: null,         // working copy of `params` while editingParams is true
 };
 
+/** Chart.js instance handle, so it can be destroyed/recreated on re-render. */
 let chartInstance = null;
+
+/** Handle for the active toast's auto-dismiss timer, so a new toast can cancel it. */
 let toastTimeout = null;
 
+/** Formats a number as Indonesian Rupiah, e.g. 10000000 -> "Rp 10.000.000". */
 const fmtIDR = (n) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
 
-/* ============ CALCULATIONS ============ */
+/* ============================================================
+ * CALCULATIONS
+ * ============================================================ */
+
+/**
+ * Pure calculation function for the PPM billing scheme.
+ *
+ * Max Potential = standardMp × rateBase (i.e. full contracted billing if
+ * every man power worked the full period).
+ * Actual Bill   = sum over employees of (activeDays / fullDays) × rateBase
+ *                 (each employee prorated by their active days).
+ * Achievement   = Actual / Max Potential, as a percentage.
+ *
+ * @param {Array<{nip:number,name:string,note:string,days:number}>} employees
+ * @param {{fullDays:number, rateBase:number, standardMp:number}} params
+ * @returns {{maxPotential:number, actual:number, achievement:number, rows:Array}}
+ *          `rows` = employees enriched with a computed `bill` field.
+ */
 function calc(employees, params) {
   const maxPotential = params.standardMp * params.rateBase;
   const rows = employees.map(e => {
@@ -186,7 +304,17 @@ function calc(employees, params) {
   return { maxPotential, actual, achievement, rows };
 }
 
-/* ============ TOAST ============ */
+/* ============================================================
+ * TOAST NOTIFICATIONS
+ * ============================================================ */
+
+/**
+ * Shows a transient toast message in the bottom-right corner.
+ * Replaces any currently-visible toast and resets its auto-dismiss timer.
+ *
+ * @param {string} message   Toast text (may contain pre-escaped HTML).
+ * @param {'moss'|'rust'|'gold'} [tone='moss']  Visual tone / icon color.
+ */
 function showToast(message, tone = 'moss') {
   const host = document.getElementById('toast-host');
   if (!host) return;
@@ -212,13 +340,26 @@ function showToast(message, tone = 'moss') {
   }, 3200);
 }
 
-/* ============ RENDER ============ */
+/* ============================================================
+ * MAIN RENDER
+ * ============================================================
+ * The app uses a "full re-render" pattern: every state change triggers a
+ * complete rebuild of #app's innerHTML from the current `state`, followed
+ * by re-attaching all event listeners (since the old DOM nodes — and their
+ * listeners — were just discarded).
+ */
+
+/**
+ * Rebuilds the entire app DOM from the current `state` and re-attaches
+ * all event listeners. This is the single re-render entry point; every
+ * event handler in this file ends by calling `render()`.
+ */
 function render() {
   const app = document.getElementById('app');
   const { maxPotential, actual, achievement, rows } = calc(state.employees, state.params);
 
   app.innerHTML = `
-    ${renderHeader(achievement)}
+    ${renderHeader()}
     <div id="toast-host" class="fixed bottom-6 right-6 z-50"></div>
     <main class="max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
       ${state.role === 'creator' ? renderCreator(maxPotential, actual, achievement, rows) : renderApproverGate(maxPotential, actual, achievement, rows)}
@@ -234,6 +375,7 @@ function render() {
     drawChart('chart-canvas', maxPotential, actual, false);
   } else {
     attachApproverEvents();
+    // Only draw the approver's chart once authenticated and a billing exists.
     if (state.approverAuthed && state.status !== 'draft') {
       drawChart('chart-canvas-approver', maxPotential, actual, true);
     }
@@ -242,15 +384,18 @@ function render() {
   if (state.empModal) attachEmployeeModalEvents();
 }
 
+/**
+ * Renders the sticky page footer: current contract scheme summary (left)
+ * and the author/attribution block (right).
+ */
 function renderFooter() {
   return `
     <footer class="max-w-[1400px] mx-auto px-6 lg:px-10 pb-10 pt-4 border-t border-moss-200/60 mt-6">
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div class="flex items-center gap-2 text-xs text-moss-700/60 font-mono flex-wrap">
-          <span>SCHEME · PPM · RATE ${fmtIDR(state.params.rateBase)} / MP / BULAN</span>
-          <span class="hidden sm:inline">·</span>
-          <span>PERIOD · MEI 2026 · ${state.params.fullDays} FULL DAYS</span>
+          <span>SCHEME · PPM · RATE ${fmtIDR(state.params.rateBase)} / MP</span>
         </div>
+        <!-- Author / attribution block -->
         <div class="border border-moss-300/60 rounded-lg bg-white/70 px-4 py-2.5 leading-tight">
           <p class="text-xs font-semibold text-moss-800">Alvian Ibnu Farhan <span class="text-moss-700/50 font-normal">· 2251171</span></p>
           <p class="text-[11px] text-moss-800/60 font-mono">CCS | MIS - OPG2 | Unit3</p>
@@ -260,6 +405,10 @@ function renderFooter() {
     </footer>`;
 }
 
+/**
+ * Returns the status badge markup for the current `state.status`.
+ * @returns {string} HTML for a small colored badge.
+ */
 function statusBadge() {
   const map = {
     draft:    { label: 'DRAFT — BELUM DISUBMIT', cls: 'bg-moss-100 text-moss-700 border-moss-300' },
@@ -271,17 +420,21 @@ function statusBadge() {
   return `<span class="font-mono text-[11px] tracking-wider px-2.5 py-1 rounded border ${s.cls} font-semibold">${s.label}</span>`;
 }
 
-function renderHeader(achievement) {
+/**
+ * Renders the sticky top header: brand mark, title, status badge, and the
+ * Creator/Approver role switcher.
+ */
+function renderHeader() {
   return `
   <header class="border-b border-moss-300/70 bg-paper/95 backdrop-blur sticky top-0 z-40">
     <div class="max-w-[1400px] mx-auto px-6 lg:px-10 py-4 flex flex-wrap items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <div class="w-9 h-9 rounded bg-moss-700 flex items-center justify-center shrink-0">
-          <span class="font-display text-paper text-lg leading-none pb-0.5">L</span>
+          <span class="font-display text-paper text-lg leading-none pb-0.5">AIF</span>
         </div>
         <div>
           <h1 class="font-display text-xl font-semibold leading-tight tracking-tight">WFM Billing Practice</h1>
-          <p class="text-[11px] font-mono text-moss-700/70 -mt-0.5">Manpower Billing · Mei 2026</p>
+          <p class="text-[11px] font-mono text-moss-700/70 -mt-0.5">Manpower Billing</p>
         </div>
         <div class="hidden md:block ml-2">${statusBadge()}</div>
       </div>
@@ -299,7 +452,17 @@ function renderHeader(achievement) {
   </header>`;
 }
 
-/* ---------- PARAMETERS PANEL ---------- */
+/* ---------- CONTRACT PARAMETERS PANEL (Layer 1: Creator) ---------- */
+
+/**
+ * Renders the editable "Contract Parameters" card (rate, standard man
+ * power, full days). Shows read-only values, or number inputs plus
+ * Save/Cancel when `state.editingParams` is true.
+ *
+ * @param {boolean} locked  True once the billing has been submitted
+ *                          (status is 'pending' or 'approved') — hides the
+ *                          Edit button entirely and shows a "LOCKED" tag.
+ */
 function renderParamsPanel(locked) {
   const p = state.editingParams ? state.paramsDraft : state.params;
   return `
@@ -346,7 +509,18 @@ function renderParamsPanel(locked) {
   </div>`;
 }
 
-/* ---------- CREATOR VIEW ---------- */
+/* ---------- CREATOR VIEW (Layer 1) ---------- */
+
+/**
+ * Renders the full Billing Creator page: parameters panel, KPI cards,
+ * employee data table (with per-row prorate sliders / CRUD), and the
+ * Max Potential vs Actual chart + Submit action.
+ *
+ * @param {number} maxPotential
+ * @param {number} actual
+ * @param {number} achievement  Percentage (0-100+).
+ * @param {Array}  rows         Employees enriched with a computed `bill`.
+ */
 function renderCreator(maxPotential, actual, achievement, rows) {
   const locked = state.status === 'pending' || state.status === 'approved';
   return `
@@ -453,6 +627,11 @@ function renderCreator(maxPotential, actual, achievement, rows) {
 }
 
 /* ---------- EMPLOYEE MODAL (Add/Edit) ---------- */
+
+/**
+ * Renders the Add/Edit Employee modal overlay, populated from
+ * `state.empModal` ({ mode, nip, name, note, days }).
+ */
 function renderEmployeeModal() {
   const m = state.empModal;
   const isEdit = m.mode === 'edit';
@@ -494,7 +673,17 @@ function renderEmployeeModal() {
   </div>`;
 }
 
-/* ---------- APPROVER: PASSWORD GATE ---------- */
+/* ---------- APPROVER: PASSWORD GATE (Layer 2 entry point) ---------- */
+
+/**
+ * Gatekeeper for the Approver view. Renders the password login form if
+ * `state.approverAuthed` is false; otherwise delegates to `renderApprover()`.
+ *
+ * @param {number} maxPotential
+ * @param {number} actual
+ * @param {number} achievement
+ * @param {Array}  rows
+ */
 function renderApproverGate(maxPotential, actual, achievement, rows) {
   if (!state.approverAuthed) {
     return `
@@ -518,7 +707,20 @@ function renderApproverGate(maxPotential, actual, achievement, rows) {
   return renderApprover(maxPotential, actual, achievement, rows);
 }
 
-/* ---------- APPROVER VIEW ---------- */
+/* ---------- APPROVER VIEW (Layer 2) ---------- */
+
+/**
+ * Renders the authenticated Approver page.
+ * - If no billing has ever been submitted (`status === 'draft'`), shows an
+ *   empty-state placeholder.
+ * - Otherwise recalculates from the locked `submittedSnapshot` (not the
+ *   live/editable `state.employees`/`state.params`) and renders the KPI
+ *   cards, read-only employee table, chart, and the Approve/Reject actions.
+ *
+ * Note: the `maxPotential`/`actual`/`achievement`/`rows` parameters passed
+ * in reflect the *live* Creator-side state and are intentionally not used
+ * here — the Approver must only ever see the immutable submitted snapshot.
+ */
 function renderApprover(maxPotential, actual, achievement, rows) {
   if (state.status === 'draft') {
     return `
@@ -538,6 +740,7 @@ function renderApprover(maxPotential, actual, achievement, rows) {
     </div>`;
   }
 
+  // Always recompute from the locked snapshot, never from the live Creator state.
   const snap = calc(state.submittedSnapshot.employees, state.submittedSnapshot.params);
 
   return `
@@ -641,7 +844,17 @@ function renderApprover(maxPotential, actual, achievement, rows) {
   `;
 }
 
-/* ---------- KPI CARDS ---------- */
+/* ---------- KPI CARDS (shared by Creator + Approver views) ---------- */
+
+/**
+ * Renders the three summary cards: Max Potential Bill, Actual Bill, and
+ * Achievement (with a progress bar). Color of the Achievement figure
+ * shifts green/gold/rust based on thresholds (>=95% / >=85% / below).
+ *
+ * @param {number} maxPotential
+ * @param {number} actual
+ * @param {number} achievement  Percentage (0-100+).
+ */
 function renderKPICards(maxPotential, actual, achievement) {
   const achColor = achievement >= 95 ? 'text-moss-600' : achievement >= 85 ? 'text-gold' : 'text-rust';
   return `
@@ -657,7 +870,7 @@ function renderKPICards(maxPotential, actual, achievement) {
       <p class="text-xs text-moss-800/50 mt-1.5">Prorate hari aktif / ${state.params.fullDays} hari</p>
     </div>
     <div class="bg-white/60 border border-moss-300/60 rounded-xl p-5">
-      <p class="font-mono text-[11px] tracking-wide text-moss-700/60 mb-2">ACHIEVEMENT</p>
+      <p class="font-mono text-[11px] tracking-wide text-moss-700/60 mb-2">RATE</p>
       <p class="font-display text-2xl font-semibold ${achColor}">${achievement.toFixed(2)}%</p>
       <div class="w-full h-1.5 bg-ledger rounded-full mt-2.5 overflow-hidden">
         <div class="h-full bg-moss-500 rounded-full transition-all duration-500" style="width:${Math.min(achievement,100)}%"></div>
@@ -667,9 +880,23 @@ function renderKPICards(maxPotential, actual, achievement) {
 }
 
 /* ---------- CHART ---------- */
+
+/**
+ * Draws (or redraws) the Max Potential vs Actual bar chart into the given
+ * canvas element using Chart.js. Destroys any previous chart instance
+ * first, since only one chart is ever visible at a time.
+ *
+ * @param {string}  canvasId    DOM id of the target <canvas>.
+ * @param {number}  maxPotential
+ * @param {number}  actual
+ * @param {boolean} small       Use a thinner bar (for the compact Approver chart).
+ */
 function drawChart(canvasId, maxPotential, actual, small) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
+  // Guard against the Chart.js CDN failing to load (e.g. offline / blocked) —
+  // fail silently rather than throwing and interrupting the caller.
+  if (typeof Chart === 'undefined') return;
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   const ctx = canvas.getContext('2d');
 
@@ -719,7 +946,16 @@ function drawChart(canvasId, maxPotential, actual, small) {
   });
 }
 
-/* ============ UTIL ============ */
+/* ============================================================
+ * UTILITIES
+ * ============================================================ */
+
+/**
+ * Escapes a string for safe interpolation into innerHTML, preventing
+ * HTML/attribute injection from user-entered employee names/notes/etc.
+ * @param {*} str  Any value; null/undefined become an empty string.
+ * @returns {string}
+ */
 function escapeHtml(str) {
   if (str === undefined || str === null) return '';
   return String(str)
@@ -730,7 +966,15 @@ function escapeHtml(str) {
     .replaceAll("'", '&#39;');
 }
 
-/* ============ EVENTS: HEADER ============ */
+/* ============================================================
+ * EVENT WIRING
+ * ============================================================
+ * Each attach*Events() function is called after every render() and queries
+ * the fresh DOM for the elements it cares about. Handlers mutate `state`
+ * directly and finish by calling render() to reflect the change.
+ */
+
+/** Wires the Creator/Approver role-switcher buttons in the header. */
 function attachHeaderEvents() {
   document.querySelectorAll('.role-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -740,9 +984,13 @@ function attachHeaderEvents() {
   });
 }
 
-/* ============ EVENTS: CREATOR ============ */
+/**
+ * Wires all interactive elements on the Creator (Layer 1) page:
+ * contract parameter edit/save/cancel, per-employee active-days
+ * slider/input, employee add/edit/delete CRUD triggers, and Submit.
+ */
 function attachCreatorEvents() {
-  // params edit
+  // --- Contract parameters: edit / cancel / save ---
   const btnParamsEdit = document.getElementById('btn-params-edit');
   if (btnParamsEdit) {
     btnParamsEdit.addEventListener('click', () => {
@@ -771,7 +1019,7 @@ function attachCreatorEvents() {
         standardMp: Math.max(1, standardMp),
         fullDays: Math.max(1, Math.min(31, fullDays)),
       };
-      // clamp employee days to new fullDays
+      // Clamp every employee's active days so none exceed the new fullDays base.
       state.employees.forEach(e => { if (e.days > state.params.fullDays) e.days = state.params.fullDays; });
 
       state.editingParams = false;
@@ -781,7 +1029,7 @@ function attachCreatorEvents() {
     });
   }
 
-  // days sliders / inputs
+  // --- Per-employee "active days" controls (slider + numeric input, kept in sync) ---
   document.querySelectorAll('.days-slider').forEach(slider => {
     slider.addEventListener('input', (e) => updateDays(e.target.dataset.nip, e.target.value));
   });
@@ -794,7 +1042,7 @@ function attachCreatorEvents() {
     });
   });
 
-  // employee CRUD
+  // --- Employee CRUD: add / edit / delete (with inline confirm) ---
   const btnAdd = document.getElementById('btn-emp-add');
   if (btnAdd) {
     btnAdd.addEventListener('click', () => {
@@ -835,6 +1083,7 @@ function attachCreatorEvents() {
     });
   });
 
+  // --- Submit billing for approval (locks live data, snapshots it) ---
   const btnSubmit = document.getElementById('btn-submit');
   if (btnSubmit) {
     btnSubmit.addEventListener('click', () => {
@@ -854,6 +1103,12 @@ function attachCreatorEvents() {
   }
 }
 
+/**
+ * Updates a single employee's `days` value (from either the slider or the
+ * numeric input) and triggers a row-flash highlight on re-render.
+ * @param {string|number} nip
+ * @param {string|number} value  New active-days value.
+ */
 function updateDays(nip, value) {
   nip = parseInt(nip);
   const emp = state.employees.find(e => e.nip === nip);
@@ -862,10 +1117,14 @@ function updateDays(nip, value) {
     state.lastEditedNip = nip;
   }
   render();
+  // Reset immediately so the flash animation only plays once per edit.
   state.lastEditedNip = null;
 }
 
-/* ============ EVENTS: EMPLOYEE MODAL ============ */
+/**
+ * Wires the Add/Edit Employee modal: close (✕/backdrop/cancel) and save,
+ * including inline validation (name required, NIP required/unique).
+ */
 function attachEmployeeModalEvents() {
   const overlay = document.getElementById('emp-modal-overlay');
   const closeModal = () => { state.empModal = null; render(); };
@@ -875,6 +1134,7 @@ function attachEmployeeModalEvents() {
   if (btnClose) btnClose.addEventListener('click', closeModal);
   if (btnCancel) btnCancel.addEventListener('click', closeModal);
   if (overlay) {
+    // Only close when clicking the backdrop itself, not the modal box.
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeModal();
     });
@@ -928,8 +1188,12 @@ function attachEmployeeModalEvents() {
   }
 }
 
-/* ============ EVENTS: APPROVER ============ */
+/**
+ * Wires all interactive elements on the Approver (Layer 2) page:
+ * password login, logout, Approve, Reject (toggle + confirm with note).
+ */
 function attachApproverEvents() {
+  // --- Password login gate ---
   const btnLogin = document.getElementById('btn-approver-login');
   const pwInput = document.getElementById('approver-password');
   if (btnLogin && pwInput) {
@@ -958,6 +1222,7 @@ function attachApproverEvents() {
     });
   }
 
+  // --- Approve ---
   const btnApprove = document.getElementById('btn-approve');
   if (btnApprove) {
     btnApprove.addEventListener('click', () => {
@@ -967,6 +1232,7 @@ function attachApproverEvents() {
     });
   }
 
+  // --- Reject (toggle note panel, then confirm) ---
   const btnRejectToggle = document.getElementById('btn-reject-toggle');
   if (btnRejectToggle) {
     btnRejectToggle.addEventListener('click', () => {
@@ -986,7 +1252,9 @@ function attachApproverEvents() {
   }
 }
 
-/* ============ INIT ============ */
+/* ============================================================
+ * INITIAL RENDER
+ * ============================================================ */
 render();
 </script>
 </body>
