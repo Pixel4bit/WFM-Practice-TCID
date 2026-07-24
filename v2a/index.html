@@ -36,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
 <style>
-  body { font-family: 'Inter', sans-serif; background-color: #F6F4EC; }
+  body { font-family: 'Inter', sans-serif; background-color: #F6F4EC; overflow-x: hidden; }
   .font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
   .font-mono { font-family: 'IBM Plex Mono', monospace; }
 
@@ -93,6 +93,28 @@
   .method-card:hover { border-color: #9FB878; }
   .method-card.selected { border-color: #46602E; background: rgba(70,96,46,0.06); box-shadow: 0 0 0 1px #46602E; }
   .lang-btn { transition: all .15s ease; }
+
+  /* ---- Responsive sidebar (mobile off-canvas drawer) ---- */
+  #sidebar {
+    transition: transform 0.25s ease;
+  }
+  @media (max-width: 1023px) {
+    #sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      transform: translateX(-100%);
+      z-index: 50;
+      width: 17rem;
+      max-width: 84vw;
+    }
+    #sidebar.sidebar-open { transform: translateX(0); }
+  }
+  #sidebar-backdrop {
+    display: none;
+  }
+  #sidebar-backdrop.show {
+    display: block;
+  }
 </style>
 </head>
 <body class="text-ink min-h-screen">
@@ -438,6 +460,8 @@ let state = {
 
   editingParams: false,
   paramsDraft: null,
+
+  sidebarOpen: false,
 };
 
 let chartInstance = null;
@@ -485,7 +509,7 @@ function showToast(message, tone = 'moss') {
   };
   const tn = toneMap[tone] || toneMap.moss;
   host.innerHTML = `
-    <div class="toast-enter ${tn.bg} text-paper px-5 py-3.5 rounded-lg shadow-2xl flex items-center gap-3 min-w-[280px] max-w-[380px]" id="toast-el">
+    <div class="toast-enter ${tn.bg} text-paper px-5 py-3.5 rounded-lg shadow-2xl flex items-center gap-3 w-full sm:w-auto sm:min-w-[280px] max-w-[380px]" id="toast-el">
       <span class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold shrink-0">${tn.icon}</span>
       <span class="text-sm font-medium leading-snug">${message}</span>
     </div>`;
@@ -507,15 +531,18 @@ function renderSidebar() {
     </div>`;
 
   return `
-  <aside class="w-64 shrink-0 bg-moss-900 min-h-screen flex flex-col py-6 sticky top-0 self-start h-screen overflow-y-auto">
-    <div class="flex items-center gap-2.5 px-5 mb-2">
-      <div class="w-9 h-9 rounded-lg bg-paper flex items-center justify-center shrink-0">
-        <span class="text-base leading-none">📋</span>
+  <aside id="sidebar" class="w-64 shrink-0 bg-moss-900 min-h-screen flex flex-col py-6 lg:sticky lg:top-0 lg:self-start lg:h-screen overflow-y-auto">
+    <div class="flex items-center justify-between px-5 mb-2">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-lg bg-paper flex items-center justify-center shrink-0">
+          <span class="text-base leading-none">📋</span>
+        </div>
+        <div>
+          <p class="text-paper font-bold text-[13px] leading-tight tracking-wide">${t('appName')}</p>
+          <p class="text-paper/60 font-mono text-[10px] tracking-wide -mt-0.5">${t('appSub')}</p>
+        </div>
       </div>
-      <div>
-        <p class="text-paper font-bold text-[13px] leading-tight tracking-wide">${t('appName')}</p>
-        <p class="text-paper/60 font-mono text-[10px] tracking-wide -mt-0.5">${t('appSub')}</p>
-      </div>
+      <button id="btn-sidebar-close" class="lg:hidden text-paper/60 hover:text-paper text-xl leading-none px-1">✕</button>
     </div>
 
     <div class="sidebar-section-label">${t('sectionCreator')}</div>
@@ -585,12 +612,15 @@ function renderTopbar() {
   const dateStr = now.toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   return `
-  <header class="border-b border-moss-300/70 bg-paper/95 backdrop-blur sticky top-0 z-40">
-    <div class="px-6 lg:px-10 py-4 flex flex-wrap items-center justify-between gap-4">
-      <div>
-        <p class="font-mono text-[10.5px] text-moss-700/60 tracking-wide mb-0.5">${meta.crumb.toUpperCase()}</p>
-        <h1 class="font-display text-2xl font-semibold leading-tight tracking-tight">${meta.title}</h1>
-        <p class="text-sm text-moss-800/60 mt-0.5">${meta.sub}</p>
+  <header class="border-b border-moss-300/70 bg-paper/95 backdrop-blur sticky top-0 z-30">
+    <div class="px-4 sm:px-6 lg:px-10 py-4 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-start gap-3 min-w-0">
+        <button id="btn-sidebar-open" class="lg:hidden shrink-0 mt-1 w-9 h-9 rounded-lg border border-moss-300/70 bg-white/70 flex items-center justify-center text-moss-800 text-base">☰</button>
+        <div class="min-w-0">
+          <p class="font-mono text-[10.5px] text-moss-700/60 tracking-wide mb-0.5">${meta.crumb.toUpperCase()}</p>
+          <h1 class="font-display text-xl sm:text-2xl font-semibold leading-tight tracking-tight truncate">${meta.title}</h1>
+          <p class="text-sm text-moss-800/60 mt-0.5">${meta.sub}</p>
+        </div>
       </div>
       <div class="flex items-center gap-3">
         <div class="hidden sm:flex items-center gap-1.5 text-xs font-mono text-moss-700/70 border border-moss-300/60 rounded-lg px-3 py-2 bg-white/60">
@@ -604,7 +634,7 @@ function renderTopbar() {
 
 function renderFooter() {
   return `
-  <footer class="px-6 lg:px-10 pb-10 pt-6 border-t border-moss-200/60 mt-8">
+  <footer class="px-4 sm:px-6 lg:px-10 pb-10 pt-6 border-t border-moss-200/60 mt-8">
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
       <div class="flex items-center gap-2 text-xs text-moss-700/60 font-mono flex-wrap">
         <span>METHOD · ${state.method}</span>
@@ -627,11 +657,12 @@ function render() {
 
   app.innerHTML = `
     <div class="flex">
+      <div id="sidebar-backdrop" class="${state.sidebarOpen ? 'show' : ''} fixed inset-0 bg-ink/50 z-40 lg:hidden"></div>
       ${renderSidebar()}
       <div class="flex-1 min-w-0">
         ${renderTopbar()}
-        <div id="toast-host" class="fixed bottom-6 right-6 z-50"></div>
-        <main class="px-6 lg:px-10 py-8">
+        <div id="toast-host" class="fixed bottom-6 right-4 left-4 sm:left-auto sm:right-6 z-50 flex justify-end"></div>
+        <main class="px-4 sm:px-6 lg:px-10 py-6 sm:py-8">
           ${renderPage(maxPotential, actual, achievement, rows)}
         </main>
         ${renderFooter()}
@@ -639,6 +670,9 @@ function render() {
     </div>
     ${state.empModal ? renderEmployeeModal() : ''}
   `;
+
+  const sidebarEl = document.getElementById('sidebar');
+  if (sidebarEl && state.sidebarOpen) sidebarEl.classList.add('sidebar-open');
 
   attachGlobalEvents();
 
@@ -826,14 +860,14 @@ function renderCreatorGate() {
 function renderCreate(maxPotential, actual, achievement, rows) {
   const locked = state.status === 'pending' || state.status === 'approved';
   return `
-  <div class="mb-6 flex items-start justify-between flex-wrap gap-4">
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
     <div>
       <p class="font-mono text-xs text-moss-700/70 tracking-wide mb-1">${t('layer1')}</p>
       <h2 class="font-display text-2xl font-semibold">${t('pageCreateTitle')}</h2>
       <p class="text-sm text-moss-800/70 mt-1 max-w-2xl">${t('createBillingDesc')}</p>
       ${locked ? `<div class="mt-3 inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-2 text-xs text-moss-800">${t('alreadySubmittedLocked')} ${state.status === 'pending' ? t('waitingDecision') : t('alreadyApproved')}</div>` : ''}
     </div>
-    <button id="btn-creator-logout" class="text-xs font-mono px-3 py-1.5 rounded border border-moss-300 text-moss-700 hover:bg-moss-100 h-fit">${t('logout')}</button>
+    <button id="btn-creator-logout" class="text-xs font-mono px-3 py-1.5 rounded border border-moss-300 text-moss-700 hover:bg-moss-100 h-fit shrink-0 self-start">${t('logout')}</button>
   </div>
 
   <h3 class="text-sm font-semibold mb-3">${t('step1SelectMethod')}</h3>
@@ -954,7 +988,7 @@ function renderPPIInputPanel(locked) {
   <div class="bg-white/60 border border-moss-300/60 rounded-xl p-5">
     <h3 class="font-semibold text-sm tracking-wide mb-1">${t('interactionVolume')}</h3>
     <p class="text-xs text-moss-800/60 mb-4">${t('ppiInputDesc')}</p>
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-2 gap-3 sm:gap-4">
       <div class="border border-moss-200/60 rounded-lg p-4 bg-ledger/40">
         <p class="text-[11px] font-mono text-moss-700/60 mb-1">${t('forecastMonthlyInteraction')}</p>
         <p class="text-xl font-bold text-moss-800">${fmtNum(p.forecastInteraction)}</p>
@@ -1108,6 +1142,7 @@ function renderMyBillings() {
 
   return `
   <div class="bg-white/60 border border-moss-300/60 rounded-xl overflow-hidden">
+    <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="bg-ledger/70">
         <tr class="text-left text-moss-700/70 font-mono text-[11px] tracking-wide">
@@ -1131,6 +1166,7 @@ function renderMyBillings() {
           </tr>`).join('')}
       </tbody>
     </table>
+    </div>
   </div>`;
 }
 
@@ -1145,13 +1181,13 @@ function renderPending(maxPotential, actual, achievement, rows) {
   const snap = calc(state.submittedSnapshot.method, state.submittedSnapshot.employees, state.submittedSnapshot.params);
 
   return `
-  <div class="mb-6 flex items-start justify-between flex-wrap gap-4">
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
     <div>
       <p class="font-mono text-xs text-moss-700/70 tracking-wide mb-1">${t('layer2')}</p>
       <h2 class="font-display text-2xl font-semibold">${t('reviewBilling')} ${state.submittedSnapshot.method}</h2>
       <p class="text-sm text-moss-800/70 mt-1 max-w-2xl">${t('reviewBillingDesc')} ${t('periodLabel')}${t('thenApproveReject')}</p>
     </div>
-    <button id="btn-approver-logout" class="text-xs font-mono px-3 py-1.5 rounded border border-moss-300 text-moss-700 hover:bg-moss-100 h-fit">${t('logout')}</button>
+    <button id="btn-approver-logout" class="text-xs font-mono px-3 py-1.5 rounded border border-moss-300 text-moss-700 hover:bg-moss-100 h-fit shrink-0 self-start">${t('logout')}</button>
   </div>
 
   ${renderKPICardsForSnap(snap)}
@@ -1205,7 +1241,7 @@ function renderPPISnapPanel(p) {
   return `
   <div class="bg-white/60 border border-moss-300/60 rounded-xl p-5">
     <h3 class="font-semibold text-sm tracking-wide mb-4">${t('interactionVolumeReadonly')}</h3>
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-2 gap-3 sm:gap-4">
       <div class="border border-moss-200/60 rounded-lg p-4 bg-ledger/40">
         <p class="text-[11px] font-mono text-moss-700/60 mb-1">${t('forecastMonthlyInteraction')}</p>
         <p class="text-xl font-bold text-moss-800">${fmtNum(p.forecastInteraction)}</p>
@@ -1263,6 +1299,7 @@ function renderApprovedList() {
   }
   return `
   <div class="bg-white/60 border border-moss-300/60 rounded-xl overflow-hidden">
+    <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead class="bg-ledger/70">
         <tr class="text-left text-moss-700/70 font-mono text-[11px] tracking-wide">
@@ -1286,6 +1323,7 @@ function renderApprovedList() {
           </tr>`).join('')}
       </tbody>
     </table>
+    </div>
   </div>`;
 }
 
@@ -1402,7 +1440,7 @@ function renderSettings() {
     <div class="bg-white/60 border border-moss-300/60 rounded-xl p-5">
       <h3 class="font-semibold text-sm tracking-wide mb-1">${t('languageSection')}</h3>
       <p class="text-xs text-moss-800/60 mb-4">${t('languageDesc')}</p>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         <button class="lang-btn px-4 py-2 rounded-lg text-sm font-semibold border flex items-center gap-2 ${state.lang === 'id' ? 'bg-moss-700 text-paper border-moss-700' : 'border-moss-300 text-moss-700 hover:bg-moss-50'}" data-lang="id">
           🇮🇩 Bahasa Indonesia
         </button>
@@ -1415,7 +1453,7 @@ function renderSettings() {
     <div class="bg-white/60 border border-moss-300/60 rounded-xl p-5">
       <h3 class="font-semibold text-sm tracking-wide mb-1">${t('activeMethod')}</h3>
       <p class="text-xs text-moss-800/60 mb-4">${t('activeMethodDesc')}</p>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         ${Object.keys(methodMeta).map(m => `
           <button class="settings-method-btn px-4 py-2 rounded-lg text-sm font-semibold border ${state.method === m ? 'bg-moss-700 text-paper border-moss-700' : 'border-moss-300 text-moss-700 hover:bg-moss-50'}" data-method="${m}">${m}</button>
         `).join('')}
@@ -1520,6 +1558,7 @@ function attachGlobalEvents() {
       // auto-switch role context for approver pages
       if (page === 'pending' || page === 'approved') state.role = 'approver';
       if (page === 'create' || page === 'mybillings' || page === 'dashboard') state.role = 'creator';
+      state.sidebarOpen = false;
       render();
     });
   });
@@ -1528,6 +1567,7 @@ function attachGlobalEvents() {
     btnRoleToggle.addEventListener('click', () => {
       state.role = state.role === 'creator' ? 'approver' : 'creator';
       state.page = state.role === 'approver' ? 'pending' : 'dashboard';
+      state.sidebarOpen = false;
       render();
     });
   }
@@ -1538,6 +1578,19 @@ function attachGlobalEvents() {
       render();
     });
   });
+
+  const btnSidebarOpen = document.getElementById('btn-sidebar-open');
+  if (btnSidebarOpen) {
+    btnSidebarOpen.addEventListener('click', () => { state.sidebarOpen = true; render(); });
+  }
+  const btnSidebarClose = document.getElementById('btn-sidebar-close');
+  if (btnSidebarClose) {
+    btnSidebarClose.addEventListener('click', () => { state.sidebarOpen = false; render(); });
+  }
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', () => { state.sidebarOpen = false; render(); });
+  }
 }
 
 /* ============ EVENTS: CREATOR GATE ============ */
