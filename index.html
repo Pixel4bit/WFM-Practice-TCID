@@ -202,6 +202,9 @@
 /** Password gating the Approver (Layer 2) view. Demo-only, not for production auth. */
 const APPROVER_PASSWORD = 'approve2026';
 
+/** Password gating the Billing Creator (Layer 1) view. Demo-only, not for production auth. */
+const CREATOR_PASSWORD = 'create2026';
+
 /* ============================================================
  * SEED DATA
  * ============================================================ */
@@ -253,6 +256,10 @@ let state = {
   rejectNote: '',            // approver's note when rejecting a billing
   submittedSnapshot: null,   // deep-cloned { employees, params } captured at submit time
   lastEditedNip: null,       // NIP of the row to flash after a days-value change
+
+  // creator auth (simple client-side password gate; see CREATOR_PASSWORD)
+  creatorAuthed: false,
+  creatorAuthError: '',
 
   // approver auth (simple client-side password gate; see APPROVER_PASSWORD)
   approverAuthed: false,
@@ -363,7 +370,7 @@ function render() {
     ${renderHeader()}
     <div id="toast-host" class="fixed bottom-6 right-6 z-50"></div>
     <main class="max-w-[1400px] mx-auto px-6 lg:px-10 py-8">
-      ${state.role === 'creator' ? renderCreator(maxPotential, actual, achievement, rows) : renderApproverGate(maxPotential, actual, achievement, rows)}
+      ${state.role === 'creator' ? renderCreatorGate(maxPotential, actual, achievement, rows) : renderApproverGate(maxPotential, actual, achievement, rows)}
     </main>
     ${renderFooter()}
     ${state.empModal ? renderEmployeeModal() : ''}
@@ -372,8 +379,12 @@ function render() {
   attachHeaderEvents();
 
   if (state.role === 'creator') {
-    attachCreatorEvents();
-    drawChart('chart-canvas', maxPotential, actual, false);
+    if (state.creatorAuthed) {
+      attachCreatorEvents();
+      drawChart('chart-canvas', maxPotential, actual, false);
+    } else {
+      attachCreatorGateEvents();
+    }
   } else {
     attachApproverEvents();
     // Only draw the approver's chart once authenticated and a billing exists.
@@ -510,6 +521,40 @@ function renderParamsPanel(locked) {
   </div>`;
 }
 
+/* ---------- CREATOR: PASSWORD GATE (Layer 1 entry point) ---------- */
+
+/**
+ * Gatekeeper for the Creator view. Renders the password login form if
+ * `state.creatorAuthed` is false; otherwise delegates to `renderCreator()`.
+ *
+ * @param {number} maxPotential
+ * @param {number} actual
+ * @param {number} achievement
+ * @param {Array}  rows
+ */
+function renderCreatorGate(maxPotential, actual, achievement, rows) {
+  if (!state.creatorAuthed) {
+    return `
+    <div class="mb-6">
+      <p class="font-mono text-xs text-moss-700/70 tracking-wide mb-1">LAYER 1</p>
+      <h2 class="font-display text-2xl font-semibold">Billing Creator</h2>
+    </div>
+    <div class="max-w-sm mx-auto border border-moss-300/60 rounded-xl bg-white/60 p-8 mt-12 ${state.creatorAuthError ? 'shake' : ''}" id="creator-auth-box">
+      <div class="w-12 h-12 rounded-full bg-ledger flex items-center justify-center mb-4 mx-auto">
+        <span class="font-display text-xl text-moss-700">🔒</span>
+      </div>
+      <h3 class="font-semibold text-center text-moss-800 mb-1">Akses Terbatas</h3>
+      <p class="text-xs text-center text-moss-800/60 mb-5">Masukkan password creator untuk melanjutkan ke halaman pembuatan billing.</p>
+      <input type="password" id="creator-password" placeholder="Password creator"
+        class="w-full border ${state.creatorAuthError ? 'border-rust' : 'border-moss-300'} rounded-lg px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-1 focus:ring-moss-500 text-center tracking-widest">
+      ${state.creatorAuthError ? `<p class="text-xs text-rust text-center mt-2">${state.creatorAuthError}</p>` : ''}
+      <button id="btn-creator-login" class="w-full mt-4 bg-moss-700 hover:bg-moss-800 text-paper font-semibold text-sm py-2.5 rounded-lg transition-colors">Masuk sebagai Creator</button>
+      <p class="text-[11px] text-center text-moss-800/40 mt-4 font-mono">Demo password: create2026</p>
+    </div>`;
+  }
+  return renderCreator(maxPotential, actual, achievement, rows);
+}
+
 /* ---------- CREATOR VIEW (Layer 1) ---------- */
 
 /**
@@ -525,10 +570,13 @@ function renderParamsPanel(locked) {
 function renderCreator(maxPotential, actual, achievement, rows) {
   const locked = state.status === 'pending' || state.status === 'approved';
   return `
-  <div class="mb-6">
-    <p class="font-mono text-xs text-moss-700/70 tracking-wide mb-1">LAYER 1</p>
-    <h2 class="font-display text-2xl font-semibold">Billing Creator</h2>
-    <p class="text-sm text-moss-800/70 mt-1 max-w-2xl">Atur parameter kontrak dan data karyawan untuk periode Mei 2026. Perhitungan Max Potential, Actual Bill, dan Achievement ter-update secara realtime.</p>
+  <div class="mb-6 flex items-start justify-between flex-wrap gap-4">
+    <div>
+      <p class="font-mono text-xs text-moss-700/70 tracking-wide mb-1">LAYER 1</p>
+      <h2 class="font-display text-2xl font-semibold">Billing Creator</h2>
+      <p class="text-sm text-moss-800/70 mt-1 max-w-2xl">Atur parameter kontrak dan data karyawan untuk periode Mei 2026. Perhitungan Max Potential, Actual Bill, dan Achievement ter-update secara realtime.</p>
+    </div>
+    <button id="btn-creator-logout" class="text-xs font-mono px-3 py-1.5 rounded border border-moss-300 text-moss-700 hover:bg-moss-100 h-fit">LOGOUT</button>
   </div>
 
   ${renderParamsPanel(locked)}
@@ -986,11 +1034,46 @@ function attachHeaderEvents() {
 }
 
 /**
+ * Wires the Creator password login gate: submit-on-click and submit-on-Enter,
+ * with a shake animation + inline error on wrong password.
+ */
+function attachCreatorGateEvents() {
+  const btnLogin = document.getElementById('btn-creator-login');
+  const pwInput = document.getElementById('creator-password');
+  if (btnLogin && pwInput) {
+    const tryLogin = () => {
+      if (pwInput.value === CREATOR_PASSWORD) {
+        state.creatorAuthed = true;
+        state.creatorAuthError = '';
+        render();
+      } else {
+        state.creatorAuthError = 'Password salah. Silakan coba lagi.';
+        render();
+      }
+    };
+    btnLogin.addEventListener('click', tryLogin);
+    pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
+    pwInput.focus();
+  }
+}
+
+/**
  * Wires all interactive elements on the Creator (Layer 1) page:
  * contract parameter edit/save/cancel, per-employee active-days
  * slider/input, employee add/edit/delete CRUD triggers, and Submit.
  */
 function attachCreatorEvents() {
+  // --- Logout ---
+  const btnLogout = document.getElementById('btn-creator-logout');
+  if (btnLogout) {
+    btnLogout.addEventListener('click', () => {
+      state.creatorAuthed = false;
+      state.creatorAuthError = '';
+      render();
+      showToast('Logout dari sesi Creator.', 'gold');
+    });
+  }
+
   // --- Contract parameters: edit / cancel / save ---
   const btnParamsEdit = document.getElementById('btn-params-edit');
   if (btnParamsEdit) {
